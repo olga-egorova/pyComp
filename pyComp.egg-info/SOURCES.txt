@@ -1,0 +1,11 @@
+README.md
+setup.py
+pyComp/ElasticityQ1.py
+pyComp/HEX.py
+pyComp/__init__.py
+pyComp/buildGeometry.py
+pyComp/material.py
+pyComp.egg-info/PKG-INFO
+pyComp.egg-info/SOURCES.txt
+pyComp.egg-info/dependency_links.txt
+pyComp.egg-info/top_level.txt
