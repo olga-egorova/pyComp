@@ -4,6 +4,7 @@ petsc4py.init(sys.argv)
 import mpi4py.MPI as mpi
 from petsc4py import PETSc
 import numpy as np
+import mogp_emulator
 
 from random import randrange
 
@@ -272,7 +273,7 @@ param[10] = 5;  # G_23 GPa
 np.random.seed(1234) # Set seed so same each time for testing
 
 # Having a grid of theta-s
-theta0 = np.arange(-np.pi/3, np.pi/3 + 0.001, np.pi/6)
+theta0 = np.arange(-np.pi/30, np.pi/30 + 0.001, np.pi/180)
 Nsamples = theta0.shape[0]**3 #30
 
 baseAngles = [np.pi/4, 0.0, -np.pi/4]
@@ -282,21 +283,51 @@ theta = np.array([(x,y,z) for x in theta0 for y in theta0 for z in theta0])
 
 myModel = Cantilever(param, comm)
 
-F_track = np.zeros(shape=(Nsamples, 12))
-theta_track = np.zeros(shape = (Nsamples,3))
+### Multiple Output Gaussian Process Emulator: first, Latin hypercube design as simulation points
 
-for i in range(Nsamples):
+theta_design = mogp_emulator.LatinHypercubeDesign([(-np.pi/30, np.pi/30), (-np.pi/30, np.pi/30), (-np.pi/30, np.pi/30)])
 
-    print("This is Sample " + str(i))
+# Start with 50-100-... simulation points (should take about 5-10-... mins to run)
+n_simulations = 100
+simulation_points = theta_design.sample(n_simulations)
+simulation_output = np.array([myModel.solve(baseAngles + p, True, iterativeSolver = False) for p in simulation_points]).transpose()
 
-    print(theta[i,:])
+# for m_point in np.delete(range(12),4):  #remove point 5, where displacement is always 0
+#     simulation_output_single = simulation_output[m_point, :]
+#
+#     print("Measurement point " + str(m_point + 1))
+#     print(simulation_output_single)
+#     print(simulation_output_single.shape)
+#
+#     # Fitting a single output GP
+#     gp_ = mogp_emulator.GaussianProcess(inputs = simulation_points, targets = simulation_output_single)
+#     gp_ = mogp_emulator.fit_GP_MAP(gp_)
+#
+#     print("Correlation lengths = {}".format(np.sqrt(np.exp(-gp_.theta[:3]))))
+#     print("Sigma = {}".format(np.sqrt(np.exp(gp_.theta[3]))))
 
-    F = myModel.solve(baseAngles + theta[i,:], True, iterativeSolver = False)
+print(simulation_points)
+print(simulation_points.shape)
 
-    F_track[i] = F
-    theta_track[i] = theta[i,:] # + baseAngles
+simulation_output_fixed = np.delete(simulation_output, 4, axis = 0)
+print(simulation_output_fixed)
+print(simulation_output_fixed.shape)
 
-    print(F)
+# Fitting the MO GP. MAP with no prior parameters == uniform prior ==  MLE fitting
+mo_gp = mogp_emulator.MultiOutputGP(inputs = simulation_points, targets = simulation_output_fixed)
+print(mo_gp)
 
-np.savetxt('output_grid_5a.csv', F_track, delimiter=",")
-np.savetxt('theta_grid_5a.csv', theta_track, delimiter=",")
+print("Number of emulators: " + str(len(mo_gp.emulators)))
+
+mo_gp_fit_theta = np.array([mogp_emulator.fit_GP_MAP(gp)._theta for gp in mo_gp.emulators])
+np.savetxt("moGP_fit_hyperpars.csv", mo_gp_fit_theta, delimiter=",")
+
+mo_gp_pred_mean = np.array([gp.predict(testing = theta).mean for gp in mo_gp.emulators])
+np.savetxt("moGP_prediction_mean.csv", mo_gp_pred_mean, delimiter=",")
+mo_gp_pred_uncertainty = np.array([gp.predict(testing = theta).unc for gp in mo_gp.emulators])
+np.savetxt("moGP_prediction_uncertainty.csv", mo_gp_pred_uncertainty, delimiter=",")
+
+#mo_gp_pred = mo_gp.predict(testing = theta) # trying to generate predictions in parallel
+#numpy.savetxt("moGP_prediction.csv", mo_gp_pred, delimiter=",")
+
+#mo_gp_fit = mogp_emulator.fit_GP_MAP(mo_gp) # trying to fit in parallel
